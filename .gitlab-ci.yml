@@ -1,0 +1,243 @@
+image: docker:stable
+variables:
+  DOCKER_HOST: tcp://127.0.0.1:2375/
+  DOCKER_DRIVER: overlay2
+services:
+  - docker:18.09.7-dind
+
+stages:
+    - build-dev
+    - deploy-dev
+    - publish-qa
+    - deploy-qa
+    - publish-stage
+    - deploy-stage
+    - build-prod
+    - deploy-prod
+
+### Development ENV Auto Development
+
+build-dev:
+  stage: build-dev
+  before_script:
+    - |
+      apk add --no-cache curl jq python3 py-pip && pip install awscli
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - echo $AWS_DEFAULT_REGION
+    - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - echo "ACCOUNT_ID= $ACCOUNT_ID"
+    - export REPOSITORY_URL=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-dev:${CI_PIPELINE_ID} && echo $REPOSITORY_URL
+    - docker build -t $REPOSITORY_URL .
+    - docker push $REPOSITORY_URL
+    - docker tag $REPOSITORY_URL $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-dev:latest
+    - docker push $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-dev:latest
+  only:
+    - development
+  tags:
+    - synprointernal
+
+deploy-dev:
+  stage: deploy-dev
+  before_script:
+    - |
+      apk add --no-cache curl jq
+
+      export KUBECTL_VERSION=v1.19.0
+      curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+      chmod +x /usr/bin/kubectl 
+      kubectl version --client 
+
+      curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+      mv /tmp/eksctl /usr/local/bin
+      eksctl version
+
+      curl -o aws-iam-authenticator https://amazon-eks.s3.us-west-2.amazonaws.com/1.18.9/2020-11-02/bin/linux/amd64/aws-iam-authenticator
+      chmod +x ./aws-iam-authenticator
+      mkdir -p $HOME/bin && cp ./aws-iam-authenticator $HOME/bin/aws-iam-authenticator && export PATH=$PATH:$HOME/bin
+      aws-iam-authenticator help
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - eksctl utils write-kubeconfig --kubeconfig kubeconfig-$DEV_CLUSTER_NAME.yaml --cluster $DEV_CLUSTER_NAME --region $AWS_DEFAULT_REGION
+    - export KUBECONFIG=${PWD}/kubeconfig-$DEV_CLUSTER_NAME.yaml
+    - sed -i "s/<VERSION>/${CI_PIPELINE_ID}/g" deployment-dev.yaml
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - kubectl apply -f deployment-dev.yaml
+  only:
+    - development
+  tags:
+    - synprointernal
+
+
+### QA ENV Auto Development
+
+publish-qa:
+  stage: publish-qa
+  before_script:
+    - |
+      apk add --no-cache curl jq python3 py-pip && pip install awscli
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - echo $AWS_DEFAULT_REGION
+    - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - echo "ACCOUNT_ID= $ACCOUNT_ID"
+    - export REPOSITORY_URL=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-qa:${CI_PIPELINE_ID} && echo $REPOSITORY_URL
+    - docker build -t $REPOSITORY_URL .
+    - docker push $REPOSITORY_URL
+    - docker tag $REPOSITORY_URL $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-qa:latest
+    - docker push $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-qa:latest
+  only:
+    - qa
+  tags:
+    - synprointernal
+
+deploy-qa:
+  stage: deploy-qa
+  before_script:
+    - |
+      apk add --no-cache curl jq
+
+      export KUBECTL_VERSION=v1.19.0
+      curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+      chmod +x /usr/bin/kubectl 
+      kubectl version --client 
+
+      curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+      mv /tmp/eksctl /usr/local/bin
+      eksctl version
+
+      curl -o aws-iam-authenticator https://amazon-eks.s3.us-west-2.amazonaws.com/1.18.9/2020-11-02/bin/linux/amd64/aws-iam-authenticator
+      chmod +x ./aws-iam-authenticator
+      mkdir -p $HOME/bin && cp ./aws-iam-authenticator $HOME/bin/aws-iam-authenticator && export PATH=$PATH:$HOME/bin
+      aws-iam-authenticator help
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - eksctl utils write-kubeconfig --kubeconfig kubeconfig-$QA_CLUSTER_NAME.yaml --cluster $QA_CLUSTER_NAME --region $AWS_DEFAULT_REGION
+    - export KUBECONFIG=${PWD}/kubeconfig-$QA_CLUSTER_NAME.yaml
+    - sed -i "s/<VERSION>/${CI_PIPELINE_ID}/g" deployment-qa.yaml
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - kubectl apply -f deployment-qa.yaml
+  only:
+    - qa
+  tags:
+    - synprointernal        
+
+
+### Stage ENV Auto Development
+
+publish-stage:
+  stage: publish-stage
+  before_script:
+    - |
+      apk add --no-cache curl jq python3 py-pip && pip install awscli
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - echo $AWS_DEFAULT_REGION
+    - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - echo "ACCOUNT_ID= $ACCOUNT_ID"
+    - export REPOSITORY_URL=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-stage:${CI_PIPELINE_ID} && echo $REPOSITORY_URL
+    - docker build -t $REPOSITORY_URL .
+    - docker push $REPOSITORY_URL
+    - docker tag $REPOSITORY_URL $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-stage:latest
+    - docker push $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-stage:latest
+  only:
+    - stage
+  tags:
+    - synprointernal
+
+deploy-stage:
+  stage: deploy-stage
+  before_script:
+    - |
+      apk add --no-cache curl jq
+
+      export KUBECTL_VERSION=v1.19.0
+      curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+      chmod +x /usr/bin/kubectl 
+      kubectl version --client 
+
+      curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+      mv /tmp/eksctl /usr/local/bin
+      eksctl version
+
+      curl -o aws-iam-authenticator https://amazon-eks.s3.us-west-2.amazonaws.com/1.18.9/2020-11-02/bin/linux/amd64/aws-iam-authenticator
+      chmod +x ./aws-iam-authenticator
+      mkdir -p $HOME/bin && cp ./aws-iam-authenticator $HOME/bin/aws-iam-authenticator && export PATH=$PATH:$HOME/bin
+      aws-iam-authenticator help
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - eksctl utils write-kubeconfig --kubeconfig kubeconfig-$STAGE_CLUSTER_NAME.yaml --cluster $STAGE_CLUSTER_NAME --region $AWS_DEFAULT_REGION
+    - export KUBECONFIG=${PWD}/kubeconfig-$STAGE_CLUSTER_NAME.yaml
+    - sed -i "s/<VERSION>/${CI_PIPELINE_ID}/g" deployment-stage.yaml
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - kubectl apply -f deployment-stage.yaml
+  only:
+    - stage
+  tags:
+    - synprointernal
+
+### Production Auto Development
+
+
+build-prod:
+  stage: build-prod
+  before_script:
+    - |
+      apk add --no-cache curl jq python3 py-pip && pip install awscli
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - echo $AWS_DEFAULT_REGION
+    - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - echo "ACCOUNT_ID= $ACCOUNT_ID"
+    - export REPOSITORY_URL=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-prod:${CI_PIPELINE_ID} && echo $REPOSITORY_URL
+    - docker build -t $REPOSITORY_URL .
+    - docker push $REPOSITORY_URL
+    - docker tag $REPOSITORY_URL $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-prod:latest
+    - docker push $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/omni-warm-email-prod:latest
+  only:
+    - main
+  tags:
+    - synprointernal
+
+deploy-prod:
+  stage: deploy-prod
+  before_script:
+    - |
+      apk add --no-cache curl jq
+
+      export KUBECTL_VERSION=v1.19.0
+      curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+      chmod +x /usr/bin/kubectl 
+      kubectl version --client 
+
+      curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+      mv /tmp/eksctl /usr/local/bin
+      eksctl version
+
+      curl -o aws-iam-authenticator https://amazon-eks.s3.us-west-2.amazonaws.com/1.18.9/2020-11-02/bin/linux/amd64/aws-iam-authenticator
+      chmod +x ./aws-iam-authenticator
+      mkdir -p $HOME/bin && cp ./aws-iam-authenticator $HOME/bin/aws-iam-authenticator && export PATH=$PATH:$HOME/bin
+      aws-iam-authenticator help
+  script:
+    - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    - eksctl utils write-kubeconfig --kubeconfig kubeconfig-$CLUSTER_NAME.yaml --cluster $CLUSTER_NAME --region $AWS_DEFAULT_REGION
+    - export KUBECONFIG=${PWD}/kubeconfig-$CLUSTER_NAME.yaml
+    - sed -i "s/<VERSION>/${CI_PIPELINE_ID}/g" deployment-prod.yaml
+    - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - kubectl apply -f deployment-prod.yaml
+  only:
+    - main
+  tags:
+    - synprointernal
